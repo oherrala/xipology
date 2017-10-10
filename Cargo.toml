@@ -1,0 +1,21 @@
+[package]
+name = "xipology"
+version = "0.1.0"
+authors = ["Ossi Herrala <oherrala@iki.fi>"]
+
+[[bin]]
+name = "xipology"
+path = "src/main.rs"
+
+[lib]
+name = "xipolib"
+path = "lib/lib.rs"
+
+[dependencies]
+base64 = "0.7.0"
+env_logger = "0.4.3"
+log = "0.3.8"
+rand = "0.3.16"
+ring = "0.12.1"
+rusty-machine = "0.5.4"
+trust-dns = { version = "0.12.0", default-features = false }
