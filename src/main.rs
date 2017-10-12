@@ -4,7 +4,6 @@ extern crate env_logger;
 extern crate base64;
 extern crate rand;
 extern crate ring;
-extern crate rusty_machine;
 extern crate trust_dns;
 
 extern crate xipolib;
@@ -24,6 +23,7 @@ enum Op {
 
 fn main() {
     env_logger::init().expect("env_logger::init");
+
     let mut args = std::env::args();
     let program = args.next().expect("program name");
     let addr = match args.next() {
@@ -67,10 +67,9 @@ fn main() {
             eprint!("Reading...");
             let bytes = xipo.read_bytes().expect("xipo.read_bytes");
             eprintln!("Done!");
-            if let Some(b) = bytes {
-                let result = std::str::from_utf8(&b).expect("from_utf8");
-                println!("Received:\n\"{}\"", result);
-            }
+            let result = std::str::from_utf8(&bytes).expect("from_utf8");
+            eprintln!("Received:");
+            println!("{}", result);
         }
         Op::Write => {
             let mut buffer = String::new();

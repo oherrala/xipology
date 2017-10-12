@@ -1,3 +1,4 @@
+use std::f64;
 use std::io;
 use std::net::SocketAddr;
 use std::ops::Not;
@@ -18,7 +19,12 @@ use trust_dns::udp::UdpClientConnection;
 
 use super::{duration_to_micros, get_bit, set_bit};
 
-#[derive(Debug)]
+/// How many decoy bits per one byte of output
+const DECOY_BITS: usize = 11;
+
+type Xipo = (XipoBits, Name);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum XipoBits {
     Data(u8),
     Decoy,
@@ -61,7 +67,7 @@ impl<'a> Xipology<'a> {
         };
     }
 
-    fn byte_output(self: &mut Self, byte: u8) -> io::Result<Vec<(XipoBits, Name)>> {
+    fn byte_output(self: &mut Self, byte: u8) -> Vec<Xipo> {
         info!("write_byte({:?})", byte);
 
         let mut output = Vec::new();
@@ -88,18 +94,25 @@ impl<'a> Xipology<'a> {
             output.push((XipoBits::Parity, name));
         }
 
-        let mut rng = OsRng::new()?;
+        let mut rng = OsRng::new().expect("OsRng::new");
 
-        // Add some decoy bits
-        let decoy_bits = rng.gen_range(0, 7);
-        for _ in 0..decoy_bits {
+        // Flip up some decoy bits.
+        let decoy_flips = rng.gen_range(0, DECOY_BITS);
+        for _ in 0..decoy_flips {
             output.push((XipoBits::Decoy, self.decoy.next_name()));
         }
 
-        Ok(output)
+        // Next we advance decoy name generator to consume total of DECOY_BITS
+        // of names.
+        let decoy_flops = DECOY_BITS - decoy_flips;
+        for _ in 0..decoy_flops {
+            self.decoy.next_name();
+        }
+
+        output
     }
 
-    fn write_bits(self: &mut Self, bits: Vec<(XipoBits, Name)>) -> io::Result<usize> {
+    fn write_bits(self: &Self, bits: &[Xipo]) -> io::Result<usize> {
         let mut rng = OsRng::new()?;
         let mut output = Vec::from(bits);
         rng.shuffle(&mut output);
@@ -119,88 +132,126 @@ impl<'a> Xipology<'a> {
     }
 
     pub fn write_byte(self: &mut Self, byte: u8) -> io::Result<usize> {
-        let output = self.byte_output(byte)?;
-        self.write_bits(output)
+        let output = self.byte_output(byte);
+        self.write_bits(&output)
     }
 
     pub fn write_bytes(self: &mut Self, buf: &[u8]) -> io::Result<usize> {
         let len = buf.len();
         assert!(len > 0 && len < 255);
-        let mut output: Vec<(XipoBits, Name)> = Vec::new();
+        let mut output = Vec::new();
 
         // Length
-        let mut len_byte = self.byte_output(len as u8)?;
+        let mut len_byte = self.byte_output(len as u8);
         output.append(&mut len_byte);
 
         // Payload
         for byte in buf {
-            let mut b = self.byte_output(*byte)?;
+            let mut b = self.byte_output(*byte);
             output.append(&mut b);
         }
 
-        self.write_bits(output)
+        self.write_bits(&output)
     }
 
-    pub fn read_byte(self: &mut Self) -> io::Result<Option<u8>> {
-        let mut parity = false;
 
-        // Reservation
-        let name = self.derivator.next_name();
-        debug!("read_byte checking reservation name {}", name);
-        let delay = self.poke_name(&name)?;
-        debug!("read_byte reservation delay = {}", delay);
-        if delay > 10_000_f64 {
-            debug!("read_byte reservation delay exit");
-            return Ok(None);
-        }
+    fn byte_input(self: &mut Self) -> Vec<Xipo> {
+        let mut input = Vec::new();
 
-        // Guard
-        let name = self.derivator.next_name();
-        let delay = self.poke_name(&name)?;
-        debug!("read_byte guard delay = {}", delay);
-        if delay < 10_000_f64 {
-            debug!("read_byte guard delay exit");
-            return Ok(None);
-        }
+        input.push((XipoBits::Reservation, self.derivator.next_name()));
+        input.push((XipoBits::Guard, self.derivator.next_name()));
 
-        // Payload
-        let mut byte = 0u8;
         for bit in 0..8 {
-            let name = self.derivator.next_name();
-            let delay = self.poke_name(&name)?;
-            if delay < 10_000_f64 {
-                debug!("read one bit({}) from {}", bit, name);
-                set_bit(&mut byte, bit);
+            input.push((XipoBits::Data(bit), self.derivator.next_name()));
+        }
+
+        input.push((XipoBits::Parity, self.derivator.next_name()));
+
+        let mut rng = OsRng::new().expect("OsRng::new");
+        let decoy_flips = rng.gen_range(0, DECOY_BITS);
+        let decoy_flops = DECOY_BITS - decoy_flips;
+        for _ in 0..decoy_flips {
+            input.push((XipoBits::Decoy, self.decoy.next_name()));
+        }
+        for _ in 0..decoy_flops {
+            self.decoy.next_name();
+        }
+
+        input
+    }
+
+    fn read_bits(self: &Self, xipo: &[Xipo]) -> io::Result<Option<u8>> {
+        let mut rng = OsRng::new()?;
+        let mut input = Vec::from(xipo);
+        rng.shuffle(&mut input);
+
+        let bits: Vec<XipoBits> = input
+            .par_iter()
+            .map(|&(ref bit, ref name)| {
+                let delay = match self.poke_name(name) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        debug!("Error read bit {:?} from name {}: {}", bit, name, err);
+                        f64::NAN
+                    }
+                };
+                if delay < 10_000_f64 {
+                    *bit
+                } else {
+                    // 0 bits are read as "Decoy" and ignored
+                    XipoBits::Decoy
+                }
+            })
+            .collect();
+
+        if !bits.contains(&XipoBits::Reservation) {
+            return Ok(None);
+        }
+
+        if bits.contains(&XipoBits::Guard) {
+            return Ok(None);
+        }
+
+        let mut parity = false;
+        let mut byte = 0u8;
+        for b in &bits {
+            if let XipoBits::Data(n) = *b {
+                set_bit(&mut byte, n);
                 parity = parity.not();
             }
         }
-        // Parity (even)
-        let name = self.derivator.next_name();
-        let delay = self.poke_name(&name)?;
-        debug!("read_byte parity delay = {}", delay);
-        if (delay < 10_000_f64 && !parity) || (delay > 10_000_f64 && parity) {
+
+        if (parity && !bits.contains(&XipoBits::Parity)) ||
+            (!parity && bits.contains(&XipoBits::Parity))
+        {
             return Ok(None);
         }
 
-        info!("read_byte() = {:?}", byte);
         Ok(Some(byte))
     }
 
-    pub fn read_bytes(self: &mut Self) -> io::Result<Option<Vec<u8>>> {
-        let mut buf = Vec::new();
+    pub fn read_byte(self: &mut Self) -> io::Result<Option<u8>> {
+        let input = self.byte_input();
+        self.read_bits(&input)
+    }
 
+    pub fn read_bytes(self: &mut Self) -> io::Result<Vec<u8>> {
         let len = self.read_byte()?.unwrap_or(0);
         debug!("read_bytes len = {}", len);
 
-        for _ in 0..len {
-            if let Some(byte) = self.read_byte()? {
-                buf.push(byte);
-            } else {
-                return Ok(None);
-            }
-        }
+        let inputs: Vec<_> = (0..len).map(|_| self.byte_input()).collect();
+        let buf = inputs
+            .par_iter()
+            .map(|input| match self.read_bits(input) {
+                Ok(Some(b)) => b,
+                Ok(None) | Err(_) => {
+                    debug!("Missing byte");
+                    b' '
+                }
+            })
+            .collect();
 
-        Ok(Some(buf))
+        Ok(buf)
     }
 
     fn poke_name(self: &Self, name: &Name) -> io::Result<f64> {

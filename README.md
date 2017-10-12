@@ -11,11 +11,21 @@ Work in Progress! This code probably doesn't work anywhere yet.
 Every written byte contains some decoy bits. Decoy bits are generated from
 separate DNS Name Derivation stream and queried.
 
+Every read byte also reads some decoy bits. The Name Derivation streams between
+writer and reader are in sync.
+
 ## Concurrent and random order write
 
 When writing output, the DNS names to be queried are collected into a list, then
 the list is shuffled and DNS queries are made concurrently.
 
+## Almost concurrent and maybe random order read
+
+The order of reading bits is always random when reading one byte.
+
+When reading length prefixed bytestring it is necessary to read the length first
+before reading the bytestring. Individual bytes from bytestring are read
+concurrently.
 
 # Protocol
 
