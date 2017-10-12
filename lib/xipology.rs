@@ -38,11 +38,13 @@ pub struct Xipology<'a> {
     decoy: NameDerivator,
     secret: &'a [u8],
     server: SocketAddr,
+    query_times: Option<super::autoconf::QueryTimes>,
 }
 
 impl<'a> Xipology<'a> {
     pub fn from_secret(server: SocketAddr, secret: &'a [u8]) -> io::Result<Self> {
         let mut derivator = NameDerivator::from_secret(secret);
+        let query_times = None;
 
         let decoy = {
             let mut decoy = [0u8; 32];
@@ -55,11 +57,13 @@ impl<'a> Xipology<'a> {
             decoy,
             secret,
             server,
+            query_times,
         })
     }
 
     pub fn reset(self: &mut Self) {
         self.derivator = NameDerivator::from_secret(self.secret);
+        self.query_times = None;
         self.decoy = {
             let mut decoy = [0u8; 32];
             self.derivator.hkdf_extract_and_expand(&mut decoy);
@@ -180,10 +184,17 @@ impl<'a> Xipology<'a> {
         input
     }
 
-    fn read_bits(self: &Self, xipo: &[Xipo]) -> io::Result<Option<u8>> {
-        let mut rng = OsRng::new()?;
+    fn read_bits(self: &Self, xipo: &[Xipo]) -> Option<u8> {
+        let mut rng = OsRng::new().expect("OsRng::new");
         let mut input = Vec::from(xipo);
         rng.shuffle(&mut input);
+
+        let query_times = self.query_times.expect("query_times");
+        let is_hit = |delay: f64| {
+            let md = f64::abs(query_times.miss - delay);
+            let hd = f64::abs(query_times.hit - delay);
+            hd < md
+        };
 
         let bits: Vec<XipoBits> = input
             .par_iter()
@@ -195,7 +206,7 @@ impl<'a> Xipology<'a> {
                         f64::NAN
                     }
                 };
-                if delay < 10_000_f64 {
+                if is_hit(delay) {
                     *bit
                 } else {
                     // 0 bits are read as "Decoy" and ignored
@@ -205,11 +216,11 @@ impl<'a> Xipology<'a> {
             .collect();
 
         if !bits.contains(&XipoBits::Reservation) {
-            return Ok(None);
+            return None;
         }
 
         if bits.contains(&XipoBits::Guard) {
-            return Ok(None);
+            return None;
         }
 
         let mut parity = false;
@@ -224,27 +235,43 @@ impl<'a> Xipology<'a> {
         if (parity && !bits.contains(&XipoBits::Parity)) ||
             (!parity && bits.contains(&XipoBits::Parity))
         {
-            return Ok(None);
+            return None;
         }
 
-        Ok(Some(byte))
+        info!("Read byte {}", byte);
+        Some(byte)
     }
 
     pub fn read_byte(self: &mut Self) -> io::Result<Option<u8>> {
+        if let None = self.query_times {
+            debug!("Measuring query times");
+            let query_times = super::autoconf::test_query_time_differences(self.server)?;
+            info!("{:?}", query_times);
+            self.query_times = Some(query_times);
+        }
+
         let input = self.byte_input();
-        self.read_bits(&input)
+        Ok(self.read_bits(&input))
     }
 
     pub fn read_bytes(self: &mut Self) -> io::Result<Vec<u8>> {
+        if let None = self.query_times {
+            debug!("Measuring query times");
+            let query_times = super::autoconf::test_query_time_differences(self.server)?;
+            info!("{:?}", query_times);
+            self.query_times = Some(query_times);
+        }
+
         let len = self.read_byte()?.unwrap_or(0);
         debug!("read_bytes len = {}", len);
 
         let inputs: Vec<_> = (0..len).map(|_| self.byte_input()).collect();
+
         let buf = inputs
             .par_iter()
             .map(|input| match self.read_bits(input) {
-                Ok(Some(b)) => b,
-                Ok(None) | Err(_) => {
+                Some(b) => b,
+                None => {
                     debug!("Missing byte");
                     b' '
                 }
