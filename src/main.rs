@@ -10,8 +10,6 @@ extern crate xipolib;
 
 use std::io::{self, Read};
 
-// mod autoconf;
-
 fn print_help(program: &str) {
     eprintln!("{} <dns server ip> <secret> <read | write <text>>", program);
 }
