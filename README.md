@@ -2,6 +2,20 @@
 
 A covert channel using nothing but DNS cache.
 
+Work in Progress! This code probably doesn't work anywhere yet.
+
+# Implementation details
+
+## Decoy bits
+
+Every written byte contains some decoy bits. Decoy bits are generated from
+separate DNS Name Derivation stream and queried.
+
+## Concurrent and random order write
+
+When writing output, the DNS names to be queried are collected into a list, then
+the list is shuffled and DNS queries are made concurrently.
+
 
 # Protocol
 

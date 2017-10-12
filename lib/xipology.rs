@@ -6,9 +6,11 @@ use std::time;
 
 use base64;
 
+use rand::{Rng, OsRng};
+use rayon::prelude::*;
+use ring::digest;
 use ring::hkdf;
 use ring::hmac::SigningKey;
-use ring::digest;
 
 use trust_dns::client::{Client, SyncClient};
 use trust_dns::rr::{DNSClass, RecordType, Name};
@@ -16,37 +18,57 @@ use trust_dns::udp::UdpClientConnection;
 
 use super::{duration_to_micros, get_bit, set_bit};
 
+#[derive(Debug)]
+enum XipoBits {
+    Data(u8),
+    Decoy,
+    Guard,
+    Parity,
+    Reservation,
+}
+
 pub struct Xipology<'a> {
-    derivator: NameDerivator<'a>,
+    derivator: NameDerivator,
+    decoy: NameDerivator,
     secret: &'a [u8],
-    client: SyncClient,
+    server: SocketAddr,
 }
 
 impl<'a> Xipology<'a> {
     pub fn from_secret(server: SocketAddr, secret: &'a [u8]) -> io::Result<Self> {
-        let derivator = NameDerivator::from_secret(secret);
-        let conn = UdpClientConnection::new(server)?;
-        let client = SyncClient::new(conn);
+        let mut derivator = NameDerivator::from_secret(secret);
+
+        let decoy = {
+            let mut decoy = [0u8; 32];
+            derivator.hkdf_extract_and_expand(&mut decoy);
+            NameDerivator::from_secret(&decoy)
+        };
 
         Ok(Self {
             derivator,
+            decoy,
             secret,
-            client,
+            server,
         })
     }
 
     pub fn reset(self: &mut Self) {
         self.derivator = NameDerivator::from_secret(self.secret);
+        self.decoy = {
+            let mut decoy = [0u8; 32];
+            self.derivator.hkdf_extract_and_expand(&mut decoy);
+            NameDerivator::from_secret(&decoy)
+        };
     }
 
-    pub fn write_byte(self: &mut Self, byte: u8) -> io::Result<()> {
+    fn byte_output(self: &mut Self, byte: u8) -> io::Result<Vec<(XipoBits, Name)>> {
         info!("write_byte({:?})", byte);
+
+        let mut output = Vec::new();
         let mut parity = false;
 
         // Reservation
-        let name = self.derivator.next_name();
-        debug!("write_byte reserving name {}", name);
-        let _ = self.poke_name(&name)?;
+        output.push((XipoBits::Reservation, self.derivator.next_name()));
 
         // Guard (do not touch it on write)
         let _ = self.derivator.next_name();
@@ -55,7 +77,7 @@ impl<'a> Xipology<'a> {
         for bit in 0..8 {
             let name = self.derivator.next_name();
             if get_bit(byte, bit) > 0 {
-                let _ = self.poke_name(&name)?;
+                output.push((XipoBits::Data(bit), name));
                 parity = parity.not();
             }
         }
@@ -63,10 +85,60 @@ impl<'a> Xipology<'a> {
         // Parity (even)
         let name = self.derivator.next_name();
         if parity {
-            let _ = self.poke_name(&name)?;
+            output.push((XipoBits::Parity, name));
         }
 
-        Ok(())
+        let mut rng = OsRng::new()?;
+
+        // Add some decoy bits
+        let decoy_bits = rng.gen_range(0, 7);
+        for _ in 0..decoy_bits {
+            output.push((XipoBits::Decoy, self.decoy.next_name()));
+        }
+
+        Ok(output)
+    }
+
+    fn write_bits(self: &mut Self, bits: Vec<(XipoBits, Name)>) -> io::Result<usize> {
+        let mut rng = OsRng::new()?;
+        let mut output = Vec::from(bits);
+        rng.shuffle(&mut output);
+
+        output.par_iter().for_each(|&(ref bit, ref name)| {
+            match self.poke_name(name) {
+                Ok(_) => {
+                    debug!("Wrote bit {:?} into name {}", bit, name);
+                }
+                Err(err) => {
+                    debug!("Error writing bit {:?} into name {}: {}", bit, name, err);
+                }
+            }
+        });
+
+        Ok(output.len())
+    }
+
+    pub fn write_byte(self: &mut Self, byte: u8) -> io::Result<usize> {
+        let output = self.byte_output(byte)?;
+        self.write_bits(output)
+    }
+
+    pub fn write_bytes(self: &mut Self, buf: &[u8]) -> io::Result<usize> {
+        let len = buf.len();
+        assert!(len > 0 && len < 255);
+        let mut output: Vec<(XipoBits, Name)> = Vec::new();
+
+        // Length
+        let mut len_byte = self.byte_output(len as u8)?;
+        output.append(&mut len_byte);
+
+        // Payload
+        for byte in buf {
+            let mut b = self.byte_output(*byte)?;
+            output.append(&mut b);
+        }
+
+        self.write_bits(output)
     }
 
     pub fn read_byte(self: &mut Self) -> io::Result<Option<u8>> {
@@ -114,21 +186,6 @@ impl<'a> Xipology<'a> {
         Ok(Some(byte))
     }
 
-    pub fn write_bytes(self: &mut Self, buf: &[u8]) -> io::Result<()> {
-        let len = buf.len();
-        assert!(len > 0 && len < 255);
-
-        // Length
-        self.write_byte(len as u8)?;
-
-        // Payload
-        for byte in buf {
-            self.write_byte(*byte)?;
-        }
-
-        Ok(())
-    }
-
     pub fn read_bytes(self: &mut Self) -> io::Result<Option<Vec<u8>>> {
         let mut buf = Vec::new();
 
@@ -149,28 +206,32 @@ impl<'a> Xipology<'a> {
     fn poke_name(self: &Self, name: &Name) -> io::Result<f64> {
         let class = DNSClass::IN;
         let rtype = RecordType::SRV;
+        let conn = UdpClientConnection::new(self.server)?;
+        let client = SyncClient::new(conn);
+
         let t1 = time::Instant::now();
-        let _ = self.client.query(&name, class, rtype)?;
+        let _ = client.query(name, class, rtype)?;
         let delay = t1.elapsed();
         Ok(duration_to_micros(delay))
     }
 }
 
-
-struct NameDerivator<'a> {
+struct NameDerivator {
     salt: SigningKey,
-    secret: &'a [u8],
+    secret: Vec<u8>,
 }
 
-impl<'a> NameDerivator<'a> {
-    pub fn from_secret(secret: &'a [u8]) -> Self {
+impl NameDerivator {
+    pub fn from_secret(secret: &[u8]) -> Self {
         let salt = SigningKey::new(&digest::SHA512, b"");
-
-        Self { salt, secret }
+        Self {
+            salt,
+            secret: secret.to_vec(),
+        }
     }
 
     fn hkdf_extract_and_expand(self: &mut Self, out: &mut [u8]) {
-        let prk = hkdf::extract(&self.salt, self.secret);
+        let prk = hkdf::extract(&self.salt, &self.secret);
         hkdf::expand(&prk, b"", out);
         self.salt = prk;
     }

@@ -4,8 +4,8 @@ extern crate env_logger;
 
 extern crate base64;
 extern crate rand;
+extern crate rayon;
 extern crate ring;
-extern crate rusty_machine;
 extern crate trust_dns;
 
 use std::time;
