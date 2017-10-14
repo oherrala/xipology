@@ -4,8 +4,8 @@ version = "0.1.0"
 authors = ["Ossi Herrala <oherrala@iki.fi>"]
 
 [[bin]]
-name = "xipology"
-path = "src/main.rs"
+name = "xiporw"
+path = "xiporw/main.rs"
 
 [lib]
 name = "xipolib"
