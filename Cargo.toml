@@ -7,12 +7,17 @@ authors = ["Ossi Herrala <oherrala@iki.fi>"]
 name = "xiporw"
 path = "xiporw/main.rs"
 
+[[bin]]
+name = "rendezvous"
+path = "rendezvous/main.rs"
+
 [lib]
 name = "xipolib"
 path = "lib/lib.rs"
 
 [dependencies]
 base64 = "0.7.0"
+chrono = "0.4.0"
 env_logger = "0.4.3"
 log = "0.3.8"
 rand = "0.3.16"
