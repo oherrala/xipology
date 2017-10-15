@@ -37,6 +37,6 @@ pub fn set_bit(byte: &mut u8, bit: u8) {
 /// Convert `Duration` into microseconds.
 pub fn duration_to_micros(time: time::Duration) -> f64 {
     let secs = time.as_secs() as f64 * 1e6;
-    let subsecs = time.subsec_nanos() as f64 * 1e-3;
+    let subsecs = f64::from(time.subsec_nanos()) * 1e-3;
     secs + subsecs
 }
