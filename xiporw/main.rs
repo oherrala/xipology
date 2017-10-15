@@ -58,7 +58,7 @@ fn main() {
         }
     };
 
-    let mut xipo = xipolib::Xipology::from_secret(server, &secret).expect("Xipology::from_secret");
+    let mut xipo = xipolib::Xipology::from_secret(server, secret);
 
     match op {
         Op::Read => {
