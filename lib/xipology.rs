@@ -20,7 +20,7 @@ use trust_dns::udp::UdpClientConnection;
 use super::{duration_to_micros, get_bit, set_bit};
 
 /// How many decoy bits per one byte of output
-const DECOY_BITS: usize = 1;
+const DECOY_BITS: usize = 0;
 
 type Xipo = (XipoBits, Name);
 
@@ -112,28 +112,24 @@ impl Xipology {
         }
 
         let mut rng = OsRng::new().expect("OsRng::new");
-
-        // Flip up some decoy bits.
-        let decoy_flips = rng.gen_range(0, DECOY_BITS);
-        for _ in 0..decoy_flips {
-            output.push((XipoBits::Decoy, self.decoy.next_name()));
-        }
-
-        // Next we advance decoy name generator to consume total of DECOY_BITS
-        // of names.
-        let decoy_flops = DECOY_BITS - decoy_flips;
-        for _ in 0..decoy_flops {
-            self.decoy.next_name();
+        if DECOY_BITS > 0 {
+            let decoy_flips = rng.gen_range(0, DECOY_BITS);
+            let decoy_flops = DECOY_BITS - decoy_flips;
+            // Flip up some decoy bits.
+            (0..decoy_flips).into_iter().for_each(|_| {
+                let _ = output.push((XipoBits::Decoy, self.decoy.next_name()));
+            });
+            // Next we advance decoy name generator to consume total of DECOY_BITS
+            // of names.
+            (0..decoy_flops).into_iter().for_each(|_| {
+                let _ = self.decoy.next_name();
+            });
         }
 
         output
     }
 
-    fn write_bits(self: &Self, bits: &[Xipo]) -> io::Result<usize> {
-        let mut rng = OsRng::new()?;
-        let mut output = Vec::from(bits);
-        rng.shuffle(&mut output);
-
+    fn write_bits(self: &Self, output: &[Xipo]) -> io::Result<usize> {
         output.par_iter().for_each(|&(ref bit, ref name)| {
             match self.poke_name(name) {
                 Ok(_) => {
@@ -185,23 +181,21 @@ impl Xipology {
         input.push((XipoBits::Parity, self.derivator.next_name()));
 
         let mut rng = OsRng::new().expect("OsRng::new");
-        let decoy_flips = rng.gen_range(0, DECOY_BITS);
-        let decoy_flops = DECOY_BITS - decoy_flips;
-        for _ in 0..decoy_flips {
-            input.push((XipoBits::Decoy, self.decoy.next_name()));
-        }
-        for _ in 0..decoy_flops {
-            self.decoy.next_name();
+        if DECOY_BITS > 0 {
+            let decoy_flips = rng.gen_range(0, DECOY_BITS);
+            let decoy_flops = DECOY_BITS - decoy_flips;
+            (0..decoy_flips).into_iter().for_each(|_| {
+                let _ = input.push((XipoBits::Decoy, self.decoy.next_name()));
+            });
+            (0..decoy_flops).into_iter().for_each(|_| {
+                let _ = self.decoy.next_name();
+            });
         }
 
         input
     }
 
-    fn read_bits(self: &Self, xipo: &[Xipo]) -> Result<u8, ReadError> {
-        let mut rng = OsRng::new().expect("OsRng::new");
-        let mut input = Vec::from(xipo);
-        rng.shuffle(&mut input);
-
+    fn read_bits(self: &Self, input: &[Xipo]) -> Result<u8, ReadError> {
         let query_times = self.query_times.expect("query_times");
         let is_hit = |delay: f64| {
             let md = f64::abs(query_times.miss - delay);
@@ -305,11 +299,12 @@ impl Xipology {
         let t1 = time::Instant::now();
         let _ = client.query(name, class, rtype)?;
         let delay = t1.elapsed();
+
         Ok(duration_to_micros(delay))
     }
 }
 
-struct NameDerivator {
+pub struct NameDerivator {
     salt: SigningKey,
     secret: Vec<u8>,
 }
@@ -329,7 +324,7 @@ impl NameDerivator {
         self.salt = prk;
     }
 
-    fn next_name(self: &mut Self) -> Name {
+    pub fn next_name(self: &mut Self) -> Name {
         let mut buf = [0u8; 32];
         self.hkdf_extract_and_expand(&mut buf);
         let label1 = base64::encode(&buf[0..15]);
