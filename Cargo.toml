@@ -11,6 +11,10 @@ path = "xiporw/main.rs"
 name = "rendezvous"
 path = "rendezvous/main.rs"
 
+[[bin]]
+name = "namederivator"
+path = "namederivator/main.rs"
+
 [lib]
 name = "xipolib"
 path = "lib/lib.rs"

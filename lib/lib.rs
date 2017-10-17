@@ -15,4 +15,4 @@ mod utils;
 pub use utils::*;
 
 mod xipology;
-pub use xipology::{Xipology, ReadError};
+pub use xipology::{Xipology, NameDerivator, ReadError};
