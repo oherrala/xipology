@@ -17,8 +17,8 @@ use trust_dns::rr::resource::Record;
 use super::duration_to_micros;
 
 /// Good known hostname
-const KNOWN_DNS_HIT: &'static str = "www.google.com";
-const KNOWN_DNS_MISS: &'static str = "xipoconf.example.com";
+const KNOWN_DNS_HIT: &str = "www.google.com";
+const KNOWN_DNS_MISS: &str = "xipoconf.example.com";
 
 #[derive(Debug)]
 pub struct AutoConfig {

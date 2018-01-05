@@ -144,5 +144,5 @@ fn encode_nicks(nicks: &HashSet<String>) -> Vec<u8> {
 /// ```
 fn decode_nicks(buf: &[u8]) -> HashSet<String> {
     let as_str = str::from_utf8(buf).expect("from_utf8");
-    as_str.split(",").map(str::trim).map(From::from).collect()
+    as_str.split(',').map(str::trim).map(From::from).collect()
 }

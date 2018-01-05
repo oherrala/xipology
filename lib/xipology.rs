@@ -117,7 +117,7 @@ impl Xipology {
             let decoy_flops = DECOY_BITS - decoy_flips;
             // Flip up some decoy bits.
             (0..decoy_flips).into_iter().for_each(|_| {
-                let _ = output.push((XipoBits::Decoy, self.decoy.next_name()));
+                output.push((XipoBits::Decoy, self.decoy.next_name()));
             });
             // Next we advance decoy name generator to consume total of DECOY_BITS
             // of names.
@@ -185,7 +185,7 @@ impl Xipology {
             let decoy_flips = rng.gen_range(0, DECOY_BITS);
             let decoy_flops = DECOY_BITS - decoy_flips;
             (0..decoy_flips).into_iter().for_each(|_| {
-                let _ = input.push((XipoBits::Decoy, self.decoy.next_name()));
+                input.push((XipoBits::Decoy, self.decoy.next_name()));
             });
             (0..decoy_flops).into_iter().for_each(|_| {
                 let _ = self.decoy.next_name();
