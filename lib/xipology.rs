@@ -7,7 +7,6 @@ use std::time;
 
 use base64;
 
-use rand::{Rng, OsRng};
 use rayon::prelude::*;
 use ring::digest;
 use ring::hkdf;
@@ -18,9 +17,6 @@ use trust_dns::rr::{DNSClass, RecordType, Name};
 use trust_dns::udp::UdpClientConnection;
 
 use super::{duration_to_micros, get_bit, set_bit};
-
-/// How many decoy bits per one byte of output
-const DECOY_BITS: usize = 0;
 
 type Xipo = (XipoBits, Name);
 
@@ -43,7 +39,6 @@ pub enum ReadError {
 
 pub struct Xipology {
     derivator: NameDerivator,
-    decoy: NameDerivator,
     secret: Vec<u8>,
     server: SocketAddr,
     query_times: Option<super::autoconf::QueryTimes>,
@@ -51,18 +46,11 @@ pub struct Xipology {
 
 impl Xipology {
     pub fn from_secret(server: SocketAddr, secret: Vec<u8>) -> Self {
-        let mut derivator = NameDerivator::from_secret(&secret);
+        let derivator = NameDerivator::from_secret(&secret);
         let query_times = None;
-
-        let decoy = {
-            let mut decoy = [0u8; 32];
-            derivator.hkdf_extract_and_expand(&mut decoy);
-            NameDerivator::from_secret(&decoy)
-        };
 
         Self {
             derivator,
-            decoy,
             secret,
             server,
             query_times,
@@ -77,11 +65,6 @@ impl Xipology {
     pub fn reset(self: &mut Self) {
         self.derivator = NameDerivator::from_secret(&self.secret);
         self.query_times = None;
-        self.decoy = {
-            let mut decoy = [0u8; 32];
-            self.derivator.hkdf_extract_and_expand(&mut decoy);
-            NameDerivator::from_secret(&decoy)
-        };
     }
 
     fn byte_output(self: &mut Self, byte: u8) -> Vec<Xipo> {
@@ -109,21 +92,6 @@ impl Xipology {
         let name = self.derivator.next_name();
         if parity {
             output.push((XipoBits::Parity, name));
-        }
-
-        let mut rng = OsRng::new().expect("OsRng::new");
-        if DECOY_BITS > 0 {
-            let decoy_flips = rng.gen_range(0, DECOY_BITS);
-            let decoy_flops = DECOY_BITS - decoy_flips;
-            // Flip up some decoy bits.
-            (0..decoy_flips).into_iter().for_each(|_| {
-                output.push((XipoBits::Decoy, self.decoy.next_name()));
-            });
-            // Next we advance decoy name generator to consume total of DECOY_BITS
-            // of names.
-            (0..decoy_flops).into_iter().for_each(|_| {
-                let _ = self.decoy.next_name();
-            });
         }
 
         output
@@ -179,18 +147,6 @@ impl Xipology {
         }
 
         input.push((XipoBits::Parity, self.derivator.next_name()));
-
-        let mut rng = OsRng::new().expect("OsRng::new");
-        if DECOY_BITS > 0 {
-            let decoy_flips = rng.gen_range(0, DECOY_BITS);
-            let decoy_flops = DECOY_BITS - decoy_flips;
-            (0..decoy_flips).into_iter().for_each(|_| {
-                input.push((XipoBits::Decoy, self.decoy.next_name()));
-            });
-            (0..decoy_flops).into_iter().for_each(|_| {
-                let _ = self.decoy.next_name();
-            });
-        }
 
         input
     }
@@ -271,7 +227,13 @@ impl Xipology {
             self.query_times = Some(query_times);
         }
 
-        let len = self.read_byte()?;
+        let len = match self.read_byte() {
+            Ok(l) => l,
+            Err(err) => {
+                eprintln!("Error reading length byte: {:?}", err);
+                return Err(err);
+            }
+        };
         debug!("read_bytes len = {}", len);
 
         let inputs: Vec<_> = (0..len).map(|_| self.byte_input()).collect();
