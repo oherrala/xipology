@@ -1,11 +1,4 @@
-extern crate log;
 extern crate env_logger;
-
-extern crate base64;
-extern crate rand;
-extern crate ring;
-extern crate trust_dns;
-
 extern crate xipolib;
 
 use std::io::{self, Read};
@@ -20,7 +13,7 @@ enum Op {
 }
 
 fn main() {
-    env_logger::init().expect("env_logger::init");
+    env_logger::init();
 
     let mut args = std::env::args();
     let program = args.next().expect("program name");

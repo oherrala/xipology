@@ -4,13 +4,13 @@ use std::io;
 use std::thread;
 use std::time;
 
-use base64;
-use rand::{Rng, OsRng};
+use data_encoding;
+use rand::{RngCore, OsRng};
 
 use trust_dns::udp::UdpClientConnection;
 use trust_dns::tcp::TcpClientConnection;
 use trust_dns::client::{Client, SyncClient};
-use trust_dns::op::Message;
+use trust_dns::op::DnsResponse;
 use trust_dns::rr::{DNSClass, Name, RecordType};
 use trust_dns::rr::resource::Record;
 
@@ -56,7 +56,7 @@ impl AutoConfig {
 }
 
 /// Generic DNS query using UDP
-fn query_udp(server: SocketAddr, name: &Name) -> io::Result<Message> {
+fn query_udp(server: SocketAddr, name: &Name) -> io::Result<DnsResponse> {
     let conn = UdpClientConnection::new(server)?;
     let client = SyncClient::new(conn);
     client.query(name, DNSClass::IN, RecordType::A).map_err(
@@ -65,7 +65,7 @@ fn query_udp(server: SocketAddr, name: &Name) -> io::Result<Message> {
 }
 
 /// Generic DNS query using TCP
-fn query_tcp(server: SocketAddr, name: &Name) -> io::Result<Message> {
+fn query_tcp(server: SocketAddr, name: &Name) -> io::Result<DnsResponse> {
     let conn = TcpClientConnection::new(server)?;
     let client = SyncClient::new(conn);
     client.query(name, DNSClass::IN, RecordType::A).map_err(
@@ -78,7 +78,7 @@ fn random_name() -> Name {
     let mut rng = OsRng::new().expect("OsRng::new");
     let mut buf = [0u8; 32];
     rng.fill_bytes(&mut buf);
-    let label = base64::encode(&buf);
+    let label = data_encoding::BASE32_DNSCURVE.encode(&buf);
     let name = format!("{}.{}", label, KNOWN_DNS_MISS);
     Name::from_str(&name).expect("Name::from_str")
 }

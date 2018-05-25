@@ -24,11 +24,11 @@ opt-level = 3
 lto = true
 
 [dependencies]
-base64 = "0.9.0"
-chrono = "0.4.0"
-env_logger = "0.4.3"
-log = "0.4.1"
-rand = "0.4.1"
-rayon = "0.9.0"
+data-encoding = "2"
+chrono = "0.4"
+env_logger = { version = "0.5", default-features = false }
+log = "0.4"
+rand = "0.5"
+rayon = "1"
 ring = "0.13.0-alpha"
-trust-dns = { version = "0.13.0", default-features = false }
+trust-dns = { version = "0.14", default-features = false }

@@ -5,7 +5,7 @@ use std::ops::Not;
 use std::str::FromStr;
 use std::time;
 
-use base64;
+use data_encoding;
 
 use rayon::prelude::*;
 use ring::digest;
@@ -289,8 +289,8 @@ impl NameDerivator {
     pub fn next_name(self: &mut Self) -> Name {
         let mut buf = [0u8; 32];
         self.hkdf_extract_and_expand(&mut buf);
-        let label1 = base64::encode(&buf[0..15]);
-        let label2 = base64::encode(&buf[16..31]);
+        let label1 = data_encoding::BASE32_DNSCURVE.encode(&buf[0..15]);
+        let label2 = data_encoding::BASE32_DNSCURVE.encode(&buf[16..31]);
         let name = format!("{}.{}.xipology.example.com.", label1, label2);
         Name::from_str(&name).expect("Name::from_str")
     }

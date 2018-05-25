@@ -2,7 +2,7 @@
 extern crate log;
 extern crate env_logger;
 
-extern crate base64;
+extern crate data_encoding;
 extern crate rand;
 extern crate rayon;
 extern crate ring;
