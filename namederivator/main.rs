@@ -15,8 +15,11 @@ fn main() {
 
     let mut nd = xipolib::NameDerivator::from_secret(secret.as_bytes());
     println!("Secret: {}", secret);
-    (0..10).for_each(|n| {
+
+    let mut n = 0;
+    loop {
         println!("{}: {}", n, nd.next_name());
         thread::sleep(Duration::from_millis(200));
-    });
+        n += 1;
+    };
 }
